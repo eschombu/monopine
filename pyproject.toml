@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "monopine"
+version = "0.0.1"
+authors = [
+    {name = "Erik Schomburg", email = "eschomburg@gmail.com"},
+]
+description = ""
+requires-python = ">=3.7"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+exclude = ["notebooks", "tests"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
