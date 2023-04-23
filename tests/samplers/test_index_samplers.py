@@ -1,3 +1,4 @@
+from math import ceil
 from typing import List, Sequence
 
 import pytest
@@ -42,32 +43,34 @@ class MockRng:
 
 
 def test_multi_seq_index_sampler(seq_lens: Sequence[int]):
-    N = sum(seq_lens)
-    sampler = MultiSeqIndexSampler(seq_lens, N * 2, MockRng())
+    L = sum(seq_lens)
+    N = 2 * L
+    sampler = MultiSeqIndexSampler(seq_lens, N, MockRng())
 
     sample_idxs_expected = [
         (0, (0, 0)),
         (11, (1, 1)),
-        (11 + N, (1, 1)),
-        (N * 2 - 1, (4, 3)),
+        (11 + L, (1, 1)),
+        (N - 1, (4, 3)),
     ]
     for idx, expected in sample_idxs_expected:
         assert sampler[idx] == expected
 
     all_samples = list(sampler)
-    assert len(all_samples) == N * 2
+    assert len(all_samples) == N
     assert all_samples[0] == (0, 0)
     assert all_samples[1] == (0, 1)
+    assert all_samples[L - 1] == (4, 3)
+    assert all_samples[L] == (0, 0)
     assert all_samples[N - 1] == (4, 3)
-    assert all_samples[N] == (0, 0)
-    assert all_samples[N * 2 - 1] == (4, 3)
 
 
 def test_multi_seq_index_sampler_offset(seq_lens: Sequence[int]):
-    N = sum(seq_lens)
+    L = sum(seq_lens)
+    N = 2 * L
     start_offset = 2
     end_offset = 1
-    sampler = MultiSeqIndexSampler(seq_lens, N * 2, MockRng(), start_offset=start_offset, end_offset=end_offset)
+    sampler = MultiSeqIndexSampler(seq_lens, N, MockRng(), start_offset=start_offset, end_offset=end_offset)
 
     sample_idxs_expected = [
         (0, (0, 2)),
@@ -79,7 +82,38 @@ def test_multi_seq_index_sampler_offset(seq_lens: Sequence[int]):
         assert sampler[idx] == expected
 
     all_samples = list(sampler)
-    assert len(all_samples) == N * 2
+    assert len(sampler) == len(all_samples) == N
     seq_idxs, idxs_seq = zip(*all_samples)
     assert all([s in {0, 1, 4} for s in seq_idxs])
     assert all([start_offset <= i < (sampler._indexer._lengths[s] - end_offset) for s, i in zip(seq_idxs, idxs_seq)])
+
+    # Make sure invalid sampler cannot be created
+    with pytest.raises(ValueError):
+        max_len = max(seq_lens)
+        offset = ceil(max_len / 2)
+        invalid_sampler = MultiSeqIndexSampler(seq_lens, N, MockRng(), start_offset=offset, end_offset=offset)
+
+
+def test_multi_seq_index_sampler_all(seq_lens: Sequence[int]):
+    L_all = sum(seq_lens)
+    sampler_all = MultiSeqIndexSampler(seq_lens, "all", MockRng())
+    assert len(sampler_all) == L_all
+    all_samples_all = list(sampler_all)
+    assert len(all_samples_all) == L_all
+    assert all([
+        all_samples_all[0] == (0, 0),
+        all_samples_all[1] == (0, 1),
+        all_samples_all[seq_lens[0]] == (1, 0),
+        all_samples_all[-1] == (len(seq_lens) - 1, seq_lens[-1] - 1),
+    ])
+
+    start_offset = 2
+    end_offset = 1
+    sampler_offsets = MultiSeqIndexSampler(seq_lens, "all", MockRng(), start_offset=start_offset, end_offset=end_offset)
+    L_offsets = sum([max(l - end_offset - start_offset, 0) for l in seq_lens])
+    all_samples_offsets = list(sampler_offsets)
+    assert len(all_samples_offsets) == L_offsets
+    assert all([
+        all_samples_offsets[0] == (0, start_offset),
+        all_samples_offsets[-1] == (len(seq_lens) - 1, seq_lens[-1] - end_offset - 1),
+    ])
