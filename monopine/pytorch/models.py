@@ -51,8 +51,15 @@ class Conv1dEncoder(SequentialModel, EncoderBase):
         self._linear_spec = linear_spec
         layers = []
         if normalizer:
+            if type(normalizer) == type:
+                try:
+                    normalizer = normalizer()
+                except TypeError:
+                    if not in_features:
+                        raise ValueError(f"in_features arg required for {type(normalizer).__name__} instantiation")
+                    normalizer = normalizer(in_features)
             layers.append(normalizer)
-        layers.extend(conv_spec.build(in_channels))
+        layers.extend(conv_spec.build(in_channels, in_features))
         if linear_spec:
             if not in_features:
                 raise ModelSpecificationError("in_features is required if linear layer is present")
@@ -91,7 +98,7 @@ class Conv1dEncoderPredictorModel(nn.Module):
 
     def forward(self, x):
         e = self.encoder(x)
-        p = self.task_predictor(e)
+        p = self.predictor(e)
         return p
 
     def _train_loop(self, dataloader: DataLoader, loss, optimizer) -> torch.Tensor:
@@ -157,21 +164,19 @@ class Conv1dEncoderPredictorModel(nn.Module):
              ) -> Tuple[torch.Tensor, torch.Tensor]:  # , OrderedDict]:
         self.eval()
         num_batches = torch.scalar_tensor(len(dataloader))
-        loss = None
-        correct = None
-        count = None
+        loss = 0
+        correct = 0
+        count = 0
         with torch.no_grad():
             for data in dataloader:
                 X, y = data
                 pred = self(X)
-                if loss is None:
-                    loss = loss_fn(pred, y)
-                    correct = ((pred >= threshold) == y).type(torch.float).sum()
-                    count = len(pred)
+                loss += loss_fn(pred, y)
+                if pred.ndim > y.ndim:
+                    correct += (pred.max(axis=-1).indices == y).type(torch.float).sum()
                 else:
-                    loss += loss_fn(pred, y)
                     correct += ((pred >= threshold) == y).type(torch.float).sum()
-                    count += len(pred)
+                count += len(y)
 
         loss /= num_batches
         correct /= count

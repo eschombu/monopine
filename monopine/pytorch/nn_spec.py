@@ -35,7 +35,7 @@ class Conv1dSpec(ModelSpec):
     num_filters: int
     kernel_size: int
     stride: int = 1
-    padding: Union[int, str] = 0
+    padding: int = 0
     dilation: int = 1
 
     def build(self, in_channels: int, **kwargs) -> nn.Module:
@@ -57,7 +57,7 @@ class Conv1dSpec(ModelSpec):
 class Pool1dSpec(ModelSpec):
     kernel_size: int
     stride: Optional[int] = None
-    padding: Union[int, str] = 0
+    padding: int = 0
     dilation: int = 1
     mode: str = 'max'
 
@@ -86,12 +86,23 @@ class Conv1dBlockSpec(ModelSpec):
     conv: Union[Conv1dSpec, nn.Module]
     pool: Optional[Union[Pool1dSpec, nn.Module]]
     nonlinearity: Optional[nn.Module] = None
-    normalizer: Optional[nn.Module] = None
+    normalizer: Optional[Union[nn.Module, str]] = None
     dropout: float = 0.0
 
-    def build(self, in_channels: int) -> List[nn.Module]:
+    def build(self, in_channels: int, in_features: Optional[int] = None) -> List[nn.Module]:
         layers = []
         if self.normalizer is not None:
+            if isinstance(self.normalizer, str):
+                if self.normalizer == "batch":
+                    self.normalizer = nn.BatchNorm1d(in_channels)
+                elif self.normalizer == "layer":
+                    if in_features is None:
+                        raise ValueError("Must provide in_features arg for layer normalization")
+                    self.normalizer = nn.LayerNorm((in_channels, in_features))
+                else:
+                    raise NotImplementedError(f"Normalizer initialization for '{self.normalizer}' not implemented")
+            elif not isinstance(self.normalizer, nn.Module):
+                raise TypeError("normalizer arg must be either a Module instance or an accepted string parameter")
             layers.append(self.normalizer)
         if self.dropout > 0:
             layers.append(nn.Dropout(self.dropout))
@@ -137,9 +148,15 @@ class Conv1dBlockSpec(ModelSpec):
             raise TypeError(f"Addition not supported for {type(other).__name__} and {type(self).__name__}")
 
     def to_json(self) -> dict:
+        if type(self.nonlinearity) == type:
+            nonlin_str = self.nonlinearity.__name__
+        elif self.nonlinearity:
+            nonlin_str = type(self.nonlinearity).__name__
+        else:
+            nonlin_str = None
         return {'conv': self.conv.to_json(),
                 'pool': self.pool.to_json(),
-                'nonlinearity': type(self.nonlinearity).__name__ if self.nonlinearity is not None else None,
+                'nonlinearity': nonlin_str,
                 'dropout': self.dropout}
 
     @classmethod
@@ -159,12 +176,15 @@ class Conv1dBlockSpec(ModelSpec):
 class Conv1dChainSpec(ModelSpec):  # CONVERT TO GENERIC LAYER-BLOCK CHAIN
     blocks: List[Conv1dBlockSpec]
 
-    def build(self, in_channels: int) -> List[nn.Module]:
+    def build(self, in_channels: int, in_features: Optional[int] = None) -> List[nn.Module]:
         layers = []
         next_in_channels = in_channels
+        next_in_features = in_features
         for block in self.blocks:
-            layers.extend(block.build(next_in_channels))
+            layers.extend(block.build(in_channels=next_in_channels, in_features=next_in_features))
             next_in_channels = block.conv.num_filters
+            if next_in_features:
+                next_in_features = block.get_output_len(next_in_features)
         return layers
 
     def get_output_len(self, in_len: int) -> int:
@@ -221,12 +241,23 @@ class LinearSpec(ModelSpec):
 class LinearBlockSpec(ModelSpec):
     linear: LinearSpec
     nonlinearity: Optional[nn.Module] = None
-    normalizer: Optional[nn.Module] = None
+    normalizer: Optional[Union[nn.Module, str]] = None
     dropout: float = 0.0
 
     def build(self, in_features: int) -> List[nn.Module]:
         layers = []
-        if self.normalizer:
+        if self.normalizer is not None:
+            if isinstance(self.normalizer, str):
+                if self.normalizer == "batch":
+                    self.normalizer = nn.BatchNorm1d(1)
+                elif self.normalizer == "layer":
+                    if in_features is None:
+                        raise ValueError("Must provide in_features arg for layer normalization")
+                    self.normalizer = nn.LayerNorm(in_features)
+                else:
+                    raise NotImplementedError(f"Normalizer initialization for '{self.normalizer}' not implemented")
+            elif not isinstance(self.normalizer, nn.Module):
+                raise TypeError("normalizer arg must be either a Module instance or an accepted string parameter")
             layers.append(self.normalizer)
         if self.dropout > 0:
             layers.append(nn.Dropout(self.dropout))
@@ -243,7 +274,10 @@ class LinearBlockSpec(ModelSpec):
     def to_json(self):
         dct = {'linear': self.linear.to_json()}
         if self.nonlinearity:
-            dct['nonlinearity'] = type(self.nonlinearity).__name__
+            if type(self.nonlinearity) == type:
+                dct['nonlinearity'] = self.nonlinearity.__name__
+            else:
+                dct['nonlinearity'] = type(self.nonlinearity).__name__
         dct['dropout'] = self.dropout
         return dct
 
